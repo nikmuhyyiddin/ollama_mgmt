@@ -45,3 +45,21 @@ def test_protected_endpoint_with_valid_token(client, auth_headers):
 def test_invalid_token_rejected(client):
     resp = client.get("/api/models", headers={"Authorization": "Bearer invalid.token.here"})
     assert resp.status_code == 401
+
+
+def test_login_brute_force_throttle(client):
+    from backend import auth
+    auth._login_fails.clear()  # isolate from other tests sharing the session
+    try:
+        # First _LOGIN_MAX_FAILS bad logins return 401; the next is throttled to 429.
+        for _ in range(auth._LOGIN_MAX_FAILS):
+            assert client.post(
+                "/api/auth/login", data={"username": "admin", "password": "nope"}
+            ).status_code == 401
+        resp = client.post(
+            "/api/auth/login", data={"username": "admin", "password": "nope"}
+        )
+        assert resp.status_code == 429
+        assert "Retry-After" in resp.headers
+    finally:
+        auth._login_fails.clear()

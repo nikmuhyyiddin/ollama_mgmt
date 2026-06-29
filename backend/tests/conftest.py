@@ -8,6 +8,7 @@ _tmp.close()
 os.environ["DB_PATH"] = _tmp.name
 os.environ["JWT_SECRET"] = "test-secret-key-abcdef1234567890abcdef12"
 os.environ["OLLAMA_HOST"] = "http://localhost:19999"  # unreachable intentionally
+os.environ["ADMIN_PASSWORD"] = "admin"  # known seed password for tests
 
 from fastapi.testclient import TestClient  # noqa: E402
 from backend.main import app  # noqa: E402

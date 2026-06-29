@@ -85,7 +85,7 @@ sudo systemctl restart ollama-mgmt
 ## 5. TLS / nginx
 
 - Site config: `nginx/ollama-mgmt.conf` → `/etc/nginx/sites-available/ollama-mgmt`.
-- Wildcard cert material lives in `wildcard.malakoff.com.my_2026/`. Install the
+- Wildcard cert material lives in `wildcard.example.com_2026/`. Install the
   `_fullchain.crt` + `.key` where the nginx config points.
 - Self-signed CA for clients is downloadable at `https://<host>/ssl-cert`.
 - Validate before reload: `sudo nginx -t && sudo systemctl reload nginx`.
