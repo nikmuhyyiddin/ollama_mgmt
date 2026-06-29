@@ -4,7 +4,7 @@ A short, task-oriented guide to running the management UI. It sits in front of
 the Ollama GPU server and adds monitoring, access control, keys, logging, and
 analytics.
 
-Access it at **https://ollama_dev.malakoff.com.my**. Sign in with your username
+Access it at **https://ollama_dev.example.com**. Sign in with your username
 and password (an admin seeds the first account). Sessions last 24h.
 
 Roles: **admin** can manage everything; **viewer** is read-only (dashboard,
@@ -27,6 +27,22 @@ Installed Ollama models with size and family. The list **auto-refreshes every
 - **Pull a model:** click *Pull Model*, enter a name (e.g. `llama3:8b`,
   `qwen2.5:14b`), watch the progress bar. Browse names at ollama.com/library.
 - **Delete a model:** trash icon → confirm. Frees its VRAM/disk.
+- **Gateway Models:** the lower section lists what API clients can call *through
+  the LiteLLM gateway* — local Ollama models plus cloud providers (OpenAI,
+  Anthropic, Gemini, OpenRouter, …). *Import from Ollama* registers all host
+  models at once; *Add* a cloud model by picking a provider and entering its name
+  (a provider key, if needed, is stored encrypted).
+
+### Playground
+A built-in chat UI for trying models without writing any code.
+- Pick a model from the dropdown, type a message, press **Enter** to send
+  (Shift+Enter for a newline). Responses stream in live.
+- Each reply shows its **latency and tokens/sec**.
+- **Compare** (top right) splits the view into two panes with independent model
+  pickers — one prompt is sent to both so you can judge quality and speed side by
+  side. **Stop** cancels an in-flight response; **Clear** resets the conversation.
+- Playground chats talk to Ollama directly (they are *not* billed against gateway
+  API-key budgets).
 
 ### Access Control
 IP allowlist enforced on every proxied Ollama request.
@@ -97,7 +113,7 @@ OpenAI-compatible, so existing OpenAI SDKs/tools work — just point them at thi
 server and use an API key as the bearer token.
 
 ```bash
-curl https://ollama_dev.malakoff.com.my/v1/chat/completions \
+curl https://ollama_dev.example.com/v1/chat/completions \
   -H "Authorization: Bearer omk_your_key_here" \
   -H "Content-Type: application/json" \
   -d '{"model":"llama3:8b","messages":[{"role":"user","content":"Hello"}]}'

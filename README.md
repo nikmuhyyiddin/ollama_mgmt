@@ -548,3 +548,7 @@ When starting a new project with this template:
 ---
 
 *This template is based on the AI-assisted development workflow from [coleam00/link-in-bio-page-builder](https://github.com/coleam00/link-in-bio-page-builder), adapted into a universal starter.*
+
+---
+
+**Built by Hj. NikM · 2026** — Ollama Management Portal & LiteLLM Gateway.

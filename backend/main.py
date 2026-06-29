@@ -88,7 +88,7 @@ _CERT_PATH = Path(__file__).parent.parent / "ollama-mgmt.crt"
 async def download_ssl_cert():
     """
     Serve the self-signed CA cert for download.
-    Visit https://ollama_dev.malakoff.com.my/ssl-cert in a browser to download it,
+    Visit https://ollama_dev.example.com/ssl-cert in a browser to download it,
     then install it as a trusted CA on your device.
     No authentication required — the cert is public information.
     """

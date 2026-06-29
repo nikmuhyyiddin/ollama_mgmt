@@ -12,7 +12,7 @@ LiteLLM :4000 admin API       (/key/*, /spend/*, /model/info)
    ↓
 providers (Ollama / OpenAI / Anthropic)
 ```
-Inference traffic still hits LiteLLM's /v1/* directly (litellm.malakoff.com.my). Only *management* consolidates into the portal.
+Inference traffic still hits LiteLLM's /v1/* directly (litellm.example.com). Only *management* consolidates into the portal.
 
 ## Backend (FastAPI)  — foundation
 - `config.py`: add `litellm_base_url` (http://127.0.0.1:4000), `litellm_master_key`.
@@ -32,7 +32,7 @@ Inference traffic still hits LiteLLM's /v1/* directly (litellm.malakoff.com.my).
 - Sidebar unchanged. No new "Gateway" section — it lives in the pages already there.
 
 ## Retire LiteLLM UI
-- Set `DISABLE_ADMIN_UI=True` in `/etc/litellm.env` (or block `/ui` + `/sso` at nginx). Keep `litellm.malakoff.com.my/v1/*` for inference.
+- Set `DISABLE_ADMIN_UI=True` in `/etc/litellm.env` (or block `/ui` + `/sso` at nginx). Keep `litellm.example.com/v1/*` for inference.
 
 ## Decommission (after parity)
 - Old custom `omk_` key system (`api_keys.py` create/verify) becomes dead once the gateway enforces keys. Keep `verify_api_key` only if any client still uses omk_ keys against the custom /v1; else delete.

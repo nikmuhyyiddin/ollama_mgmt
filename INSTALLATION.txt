@@ -1,6 +1,6 @@
 ================================================================================
   OLLAMA MANAGEMENT SERVER — INSTALLATION GUIDE
-  Wildcard SSL: *.malakoff.com.my (2026)
+  Wildcard SSL: *.example.com (2026)
 ================================================================================
 
   Package contents : ollama_mgmt_deploy.zip
@@ -46,7 +46,7 @@
     - Internet access (to install packages and download Ollama)
     - A user account with sudo privileges (e.g. nms_admin)
     - DNS record pointing your domain to the server IP
-      e.g.  ollama_a6000.malakoff.com.my  →  <SERVER IP>
+      e.g.  ollama_a6000.example.com  →  <SERVER IP>
 
   Ports required (open in firewall):
     - 22    SSH
@@ -74,12 +74,12 @@
   Step 3 — Run the deploy script
   --------------------------------
     bash scripts/deploy_remote.sh nms_admin@<TARGET-SERVER-IP> \
-        --domain ollama_a6000.malakoff.com.my \
+        --domain ollama_a6000.example.com \
         --models-dir /mnt/data/ollama_models \
         --skip-build
 
     Options:
-      --domain     <FQDN>   Domain name (e.g. ollama_a6000.malakoff.com.my)
+      --domain     <FQDN>   Domain name (e.g. ollama_a6000.example.com)
       --models-dir <PATH>   Where to store Ollama model files (needs free space)
       --skip-build          Use the pre-built frontend/dist/ included in the zip
       --no-ollama           Skip Ollama install if it is already on the target
@@ -88,7 +88,7 @@
 
   Step 4 — Done
   -------------
-    Access the app at: https://ollama_a6000.malakoff.com.my
+    Access the app at: https://ollama_a6000.example.com
     Default login: admin / admin
     CHANGE THE PASSWORD IMMEDIATELY AFTER FIRST LOGIN.
 
@@ -211,7 +211,7 @@
         DB_PATH=./db/ollama.db
         BACKEND_HOST=127.0.0.1
         BACKEND_PORT=8000
-        CORS_ORIGINS=*,https://ollama_a6000.malakoff.com.my
+        CORS_ORIGINS=*,https://ollama_a6000.example.com
 
     Initialise the database:
       mkdir -p db
@@ -238,16 +238,16 @@
   ── 3h. Configure Nginx ──────────────────────────────────────────────────────
 
     Create the fullchain certificate (combine leaf + CA bundle):
-      cat wildcard.malakoff.com.my_2026/wildcard.malakoff.com.my_2026.crt \
-          wildcard.malakoff.com.my_2026/wildcard.malakoff.com.my_2026CA.crt \
-          > wildcard.malakoff.com.my_2026/wildcard.malakoff.com.my_2026_fullchain.crt
+      cat wildcard.example.com_2026/wildcard.example.com_2026.crt \
+          wildcard.example.com_2026/wildcard.example.com_2026CA.crt \
+          > wildcard.example.com_2026/wildcard.example.com_2026_fullchain.crt
 
     Edit nginx/ollama-mgmt.conf — update these 3 lines to match your setup:
 
-      server_name  ollama_a6000.malakoff.com.my;   ← your domain (both server blocks)
+      server_name  ollama_a6000.example.com;   ← your domain (both server blocks)
 
-      ssl_certificate      /home/nms_admin/ollama_mgmt/wildcard.malakoff.com.my_2026/wildcard.malakoff.com.my_2026_fullchain.crt;
-      ssl_certificate_key  /home/nms_admin/ollama_mgmt/wildcard.malakoff.com.my_2026/wildcard.malakoff.com.my_2026.key;
+      ssl_certificate      /home/nms_admin/ollama_mgmt/wildcard.example.com_2026/wildcard.example.com_2026_fullchain.crt;
+      ssl_certificate_key  /home/nms_admin/ollama_mgmt/wildcard.example.com_2026/wildcard.example.com_2026.key;
 
       root  /home/nms_admin/ollama_mgmt/frontend/dist;   ← your actual path
 
@@ -283,22 +283,22 @@
 
   ── 3j. SSL certificates ─────────────────────────────────────────────────────
 
-    The wildcard certificate for *.malakoff.com.my (2026) is included in:
-      wildcard.malakoff.com.my_2026/
+    The wildcard certificate for *.example.com (2026) is included in:
+      wildcard.example.com_2026/
 
     Files used by Nginx:
-      wildcard.malakoff.com.my_2026_fullchain.crt  ← created in step 3h
-      wildcard.malakoff.com.my_2026.key            ← private key
+      wildcard.example.com_2026_fullchain.crt  ← created in step 3h
+      wildcard.example.com_2026.key            ← private key
 
     Certificate details:
-      Subject  : *.malakoff.com.my
+      Subject  : *.example.com
       Issuer   : Sectigo Public Server Authentication CA DV R36
       Valid    : 2026-04-05 → 2026-10-20
       Type     : Publicly trusted (no client-side installation needed)
 
     NOTE: Protect the .key file. It is already mode 644 in the zip — tighten
     permissions on the target server:
-      chmod 600 wildcard.malakoff.com.my_2026/wildcard.malakoff.com.my_2026.key
+      chmod 600 wildcard.example.com_2026/wildcard.example.com_2026.key
 
 
 ================================================================================
@@ -306,7 +306,7 @@
 ================================================================================
 
   1. Open your browser and navigate to:
-       https://ollama_a6000.malakoff.com.my
+       https://ollama_a6000.example.com
 
   2. Log in with:
        Username : admin
@@ -381,7 +381,7 @@
     ollama pull deepseek-r1:14b
 
   Via the OpenAI-compatible API (requires API key):
-    curl -X POST https://ollama_a6000.malakoff.com.my/v1/chat/completions \
+    curl -X POST https://ollama_a6000.example.com/v1/chat/completions \
       -H "Authorization: Bearer <YOUR-API-KEY>" \
       -H "Content-Type: application/json" \
       -d '{
@@ -451,7 +451,7 @@
 
     Check Nginx is running:     sudo systemctl status nginx
     Check UFW rules:            sudo ufw status
-    Check DNS:                  nslookup ollama_a6000.malakoff.com.my
+    Check DNS:                  nslookup ollama_a6000.example.com
     Check listening ports:      sudo ss -tlnp | grep -E '80|443|8443'
 
   ── "502 Bad Gateway" from Nginx ─────────────────────────────────────────────

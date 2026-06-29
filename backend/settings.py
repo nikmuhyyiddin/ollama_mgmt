@@ -102,7 +102,7 @@ async def test_smtp(req: TestEmailRequest, user: dict = Depends(get_current_user
     msg = MIMEText(
         "This is a test alert from the Ollama Management Server.\n\n"
         "If you received this email, your SMTP settings are configured correctly.\n\n"
-        "Server: MCB-OLLAMA (10.0.0.10)"
+        "Server: ollama-server"
     )
     msg["Subject"] = "[Ollama GPU Alert] Test Email"
     msg["From"] = cfg.get("smtp_from", cfg.get("smtp_user", ""))

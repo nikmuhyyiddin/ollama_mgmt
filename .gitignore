@@ -86,7 +86,8 @@ Thumbs.db
 *.sqlite3
 # TLS certificates & private keys
 *.crt
-wildcard.malakoff.com.my_2026/
+wildcard.*/
+*_fullchain.crt
 # LiteLLM proxy config — contains master_key (commit a sanitized .example instead)
 litellm_test/config.yaml
 litellm_test/

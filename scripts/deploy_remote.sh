@@ -6,7 +6,7 @@
 #   bash scripts/deploy_remote.sh <REMOTE_USER>@<REMOTE_HOST> [OPTIONS]
 #
 # Options:
-#   --domain    <FQDN>        Domain name for the server (e.g. ollama_a6000.malakoff.com.my)
+#   --domain    <FQDN>        Domain name for the server (e.g. ollama_a6000.example.com)
 #   --host-ip   <IP>          IP or hostname used internally (default: remote host)
 #   --models-dir <PATH>       Remote path to store Ollama models (default: /mnt/data/ollama_models)
 #   --no-ollama               Skip Ollama installation (if already installed)
@@ -16,7 +16,7 @@
 #
 # Examples:
 #   bash scripts/deploy_remote.sh nms_admin@192.168.1.50 \
-#       --domain ollama_a6000.malakoff.com.my \
+#       --domain ollama_a6000.example.com \
 #       --models-dir /mnt/nvme/ollama_models
 #
 # Requirements (local):
@@ -70,7 +70,7 @@ REMOTE_HOST="${REMOTE_TARGET##*@}"
 REMOTE_HOME="/home/${REMOTE_USER}"
 REMOTE_APP_DIR="${REMOTE_HOME}/ollama_mgmt"
 LOCAL_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-CERT_DIR="${LOCAL_ROOT}/wildcard.malakoff.com.my_2026"
+CERT_DIR="${LOCAL_ROOT}/wildcard.example.com_2026"
 
 # ── Banner ────────────────────────────────────────────────────────────────────
 echo ""
@@ -218,7 +218,7 @@ if [ "${SKIP_MGMT}" = false ]; then
         --exclude='.env' \
         --exclude='db/ollama.db' \
         --exclude='.pytest_cache' \
-        --exclude='wildcard.malakoff.com.my_2026' \
+        --exclude='wildcard.example.com_2026' \
         "${LOCAL_ROOT}/" \
         "${REMOTE_TARGET}:${REMOTE_APP_DIR}/"
     success "Application files synced"
@@ -228,7 +228,7 @@ if [ "${SKIP_MGMT}" = false ]; then
         step "7 / 9  Copying SSL certificates"
         if [ -d "${CERT_DIR}" ]; then
             rsync -az "${CERT_DIR}/" \
-                "${REMOTE_TARGET}:${REMOTE_APP_DIR}/wildcard.malakoff.com.my_2026/"
+                "${REMOTE_TARGET}:${REMOTE_APP_DIR}/wildcard.example.com_2026/"
             success "Certificates copied to remote"
         else
             warn "Certificate directory not found at ${CERT_DIR} — skipping cert copy"
@@ -283,14 +283,14 @@ fi
 
 echo "[8d] Installing Nginx config..."
 # Build Nginx config with correct domain + cert paths
-CERT_PATH="\${APP_DIR}/wildcard.malakoff.com.my_2026/wildcard.malakoff.com.my_2026_fullchain.crt"
-KEY_PATH="\${APP_DIR}/wildcard.malakoff.com.my_2026/wildcard.malakoff.com.my_2026.key"
+CERT_PATH="\${APP_DIR}/wildcard.example.com_2026/wildcard.example.com_2026_fullchain.crt"
+KEY_PATH="\${APP_DIR}/wildcard.example.com_2026/wildcard.example.com_2026.key"
 
 # Check if fullchain exists, create if not
-if [ -f "\${APP_DIR}/wildcard.malakoff.com.my_2026/wildcard.malakoff.com.my_2026.crt" ] && \
-   [ -f "\${APP_DIR}/wildcard.malakoff.com.my_2026/wildcard.malakoff.com.my_2026CA.crt" ]; then
-    cat "\${APP_DIR}/wildcard.malakoff.com.my_2026/wildcard.malakoff.com.my_2026.crt" \
-        "\${APP_DIR}/wildcard.malakoff.com.my_2026/wildcard.malakoff.com.my_2026CA.crt" \
+if [ -f "\${APP_DIR}/wildcard.example.com_2026/wildcard.example.com_2026.crt" ] && \
+   [ -f "\${APP_DIR}/wildcard.example.com_2026/wildcard.example.com_2026CA.crt" ]; then
+    cat "\${APP_DIR}/wildcard.example.com_2026/wildcard.example.com_2026.crt" \
+        "\${APP_DIR}/wildcard.example.com_2026/wildcard.example.com_2026CA.crt" \
         > "\${CERT_PATH}"
     echo "     Fullchain certificate created"
 fi

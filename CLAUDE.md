@@ -145,7 +145,7 @@ Browser / API Clients / External Tools
   FastAPI Management Server (:8000)
     ├── Auth middleware (JWT / API key)
     ├── IP allowlist check
-    ├── Rate limiter (Redis sliding window)
+    ├── Rate limiter (in-memory sliding window)
     ├── Request logger (SQLite)
     └── Ollama proxy → :11434
            ↓
@@ -153,7 +153,7 @@ Browser / API Clients / External Tools
      RTX 3080 Ti (GPU 0) | RTX 3080 Ti (GPU 1) | RTX 3070 (GPU 2)
 ```
 
-The server is accessed externally via `https://ollama_dev.malakoff.com.my`.
+The server is accessed externally via `https://ollama_dev.example.com`.
 
 The backend is a layered FastAPI app:
 - **Routers** handle HTTP/WebSocket endpoints (one file per domain)
@@ -165,7 +165,10 @@ The backend is a layered FastAPI app:
 
 ## API Endpoints
 
-All endpoints except `/v1/chat/completions` and `/ollama/*` require `Authorization: Bearer <token>`.
+All `/api/*` endpoints require a JWT `Authorization: Bearer <token>`. `/ollama/*` is
+gated by the IP allowlist only (no JWT). The OpenAI-compatible `/v1/chat/completions`
+is **served by the separate LiteLLM service (:4000)**, not by this backend — this app
+only proxies LiteLLM's *admin* API under `/api/gateway/*`.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -173,18 +176,23 @@ All endpoints except `/v1/chat/completions` and `/ollama/*` require `Authorizati
 | `GET` | `/api/gpu/history` | Historical GPU utilisation data |
 | `GET` | `/api/models` | List installed Ollama models |
 | `POST` | `/api/models/pull` | Pull a model (SSE progress) |
+| `POST` | `/api/chat` | Stream a chat completion from Ollama (JWT-gated; powers the Playground) |
 | `DELETE` | `/api/models/{name}` | Delete a model |
-| `POST` | `/api/models/benchmark` | Run benchmark against a model |
+| `POST` | `/api/models/benchmark` | _(roadmap — not implemented)_ |
 | `GET` | `/api/access/rules` | List IP allow/deny rules |
 | `POST` | `/api/access/rules` | Add IP rule (CIDR supported) |
 | `DELETE` | `/api/access/rules/{id}` | Remove an IP rule |
-| `GET` | `/api/keys` | List API keys |
-| `POST` | `/api/keys` | Generate a new API key |
-| `DELETE` | `/api/keys/{id}` | Revoke an API key |
+| `GET/POST/PATCH/DELETE` | `/api/gateway/keys` | LiteLLM virtual keys (list/mint/edit/revoke) |
+| `GET/POST/DELETE` | `/api/gateway/models` | Gateway model catalogue (incl. cloud providers) |
+| `GET` | `/api/gateway/spend` · `/api/gateway/report[.csv]` | Spend + historical reports (from LiteLLM Postgres) |
 | `GET` | `/api/logs` | Query request logs with filters |
-| `GET` | `/api/analytics/summary` | Token usage, latency, usage stats |
-| `POST` | `/v1/chat/completions` | OpenAI-compatible chat endpoint |
-| `ANY` | `/ollama/*` | Proxied Ollama API (auth enforced) |
+| `GET` | `/api/analytics/summary` · `/timeseries` · `/heatmap` · `/latency-by-model` | Proxy analytics |
+| `POST` | `/v1/chat/completions` | OpenAI-compatible — **served by LiteLLM :4000, not this app** |
+| `ANY` | `/ollama/*` | Proxied Ollama API (IP allowlist only) |
+
+> Note: the local `api_keys` SQLite table (`models_allowed`, `rate_limit`) is **not
+> wired** — `get_current_principal()` was never implemented, so per-key enforcement
+> lives entirely in LiteLLM. Either wire it or drop the table (see roadmap).
 
 ---
 

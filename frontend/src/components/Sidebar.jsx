@@ -233,6 +233,11 @@ export default function Sidebar() {
           >
             <LogOut className="w-4 h-4" /> Sign out
           </button>
+
+          {/* Attribution */}
+          <p className="px-3 pt-2 text-[10px] text-muted-foreground/60 text-center tracking-wide">
+            Built by Hj. NikM · 2026
+          </p>
         </div>
       </aside>
     </>
