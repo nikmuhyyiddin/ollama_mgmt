@@ -1,0 +1,279 @@
+"""
+OpenAI-compatible API Proxy — Phase 3
+
+Translates OpenAI API calls to Ollama's native format:
+  GET  /v1/models                 → Ollama /api/tags
+  POST /v1/chat/completions       → Ollama /api/chat   (streaming + non-streaming)
+  POST /v1/completions            → Ollama /api/generate (legacy, non-chat)
+  POST /v1/embeddings             → Ollama /api/embeddings
+
+Authentication: Bearer <JWT> or Bearer omk_<api_key>  (same as existing API)
+"""
+import json
+import time
+import uuid
+from typing import Any
+
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+
+from backend.api_keys import get_current_principal
+from backend.config import get_settings
+
+router = APIRouter(prefix="/v1", tags=["openai-compat"])
+
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+def _ts() -> int:
+    return int(time.time())
+
+
+def _chat_id() -> str:
+    return f"chatcmpl-{uuid.uuid4().hex[:24]}"
+
+
+def _options_from_params(body: dict) -> dict:
+    """Map OpenAI generation params → Ollama options dict."""
+    opts: dict[str, Any] = {}
+    if "temperature" in body:
+        opts["temperature"] = body["temperature"]
+    if "top_p" in body:
+        opts["top_p"] = body["top_p"]
+    if "max_tokens" in body:
+        opts["num_predict"] = body["max_tokens"]
+    if "stop" in body:
+        opts["stop"] = body["stop"]
+    if "seed" in body:
+        opts["seed"] = body["seed"]
+    return opts
+
+
+# ── /v1/models ─────────────────────────────────────────────────────────────────
+
+@router.get("/models")
+async def list_models_openai(user=Depends(get_current_principal)):
+    cfg = get_settings()
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(f"{cfg.ollama_host}/api/tags")
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail="Ollama unreachable")
+    models = resp.json().get("models", [])
+    return {
+        "object": "list",
+        "data": [
+            {
+                "id": m["name"],
+                "object": "model",
+                "created": _ts(),
+                "owned_by": "ollama",
+            }
+            for m in models
+        ],
+    }
+
+
+# ── /v1/chat/completions ────────────────────────────────────────────────────────
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
+class ChatCompletionRequest(BaseModel):
+    model: str
+    messages: list[ChatMessage]
+    stream: bool = False
+    temperature: float | None = None
+    top_p: float | None = None
+    max_tokens: int | None = None
+    stop: list[str] | str | None = None
+    seed: int | None = None
+
+
+def _sse_chunk(chat_id: str, model: str, delta: dict, finish_reason: str | None = None) -> str:
+    payload = {
+        "id": chat_id,
+        "object": "chat.completion.chunk",
+        "created": _ts(),
+        "model": model,
+        "choices": [{"index": 0, "delta": delta, "finish_reason": finish_reason}],
+    }
+    return f"data: {json.dumps(payload)}\n\n"
+
+
+@router.post("/chat/completions")
+async def chat_completions(body: ChatCompletionRequest, user=Depends(get_current_principal)):
+    cfg = get_settings()
+    chat_id = _chat_id()
+
+    ollama_payload: dict[str, Any] = {
+        "model": body.model,
+        "messages": [{"role": m.role, "content": m.content} for m in body.messages],
+        "stream": body.stream,
+    }
+    opts = _options_from_params(body.model_dump(exclude_none=True))
+    if opts:
+        ollama_payload["options"] = opts
+
+    if body.stream:
+        # ── Streaming path ──────────────────────────────────────────────────
+        async def _stream():
+            yield _sse_chunk(chat_id, body.model, {"role": "assistant", "content": ""})
+            async with httpx.AsyncClient(timeout=None) as client:
+                async with client.stream(
+                    "POST",
+                    f"{cfg.ollama_host}/api/chat",
+                    json=ollama_payload,
+                ) as resp:
+                    async for line in resp.aiter_lines():
+                        if not line:
+                            continue
+                        try:
+                            data = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        content = data.get("message", {}).get("content", "")
+                        done = data.get("done", False)
+                        if content:
+                            yield _sse_chunk(chat_id, body.model, {"content": content})
+                        if done:
+                            yield _sse_chunk(chat_id, body.model, {}, finish_reason="stop")
+                            yield "data: [DONE]\n\n"
+                            return
+
+        return StreamingResponse(_stream(), media_type="text/event-stream")
+
+    else:
+        # ── Non-streaming path ──────────────────────────────────────────────
+        async with httpx.AsyncClient(timeout=300) as client:
+            resp = await client.post(f"{cfg.ollama_host}/api/chat", json=ollama_payload)
+        if resp.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"Ollama error: {resp.text[:200]}")
+        data = resp.json()
+        content = data.get("message", {}).get("content", "")
+        prompt_tokens = data.get("prompt_eval_count", 0) or 0
+        completion_tokens = data.get("eval_count", 0) or 0
+        return {
+            "id": chat_id,
+            "object": "chat.completion",
+            "created": _ts(),
+            "model": body.model,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": content},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": prompt_tokens + completion_tokens,
+            },
+        }
+
+
+# ── /v1/completions (legacy text completion) ───────────────────────────────────
+
+class CompletionRequest(BaseModel):
+    model: str
+    prompt: str
+    stream: bool = False
+    max_tokens: int | None = None
+    temperature: float | None = None
+    stop: list[str] | str | None = None
+
+
+@router.post("/completions")
+async def completions(body: CompletionRequest, user=Depends(get_current_principal)):
+    """Legacy text completion — maps to Ollama /api/generate."""
+    cfg = get_settings()
+    comp_id = f"cmpl-{uuid.uuid4().hex[:24]}"
+    ollama_payload: dict[str, Any] = {
+        "model": body.model,
+        "prompt": body.prompt,
+        "stream": body.stream,
+    }
+    opts = _options_from_params(body.model_dump(exclude_none=True))
+    if opts:
+        ollama_payload["options"] = opts
+
+    if body.stream:
+        async def _stream():
+            async with httpx.AsyncClient(timeout=None) as client:
+                async with client.stream(
+                    "POST", f"{cfg.ollama_host}/api/generate", json=ollama_payload
+                ) as resp:
+                    async for line in resp.aiter_lines():
+                        if not line:
+                            continue
+                        try:
+                            data = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        text = data.get("response", "")
+                        done = data.get("done", False)
+                        chunk = {
+                            "id": comp_id, "object": "text_completion.chunk",
+                            "created": _ts(), "model": body.model,
+                            "choices": [{"text": text, "index": 0, "finish_reason": "stop" if done else None}],
+                        }
+                        yield f"data: {json.dumps(chunk)}\n\n"
+                        if done:
+                            yield "data: [DONE]\n\n"
+                            return
+        return StreamingResponse(_stream(), media_type="text/event-stream")
+    else:
+        async with httpx.AsyncClient(timeout=300) as client:
+            resp = await client.post(f"{cfg.ollama_host}/api/generate", json=ollama_payload)
+        data = resp.json()
+        return {
+            "id": comp_id, "object": "text_completion", "created": _ts(), "model": body.model,
+            "choices": [{"text": data.get("response", ""), "index": 0, "finish_reason": "stop"}],
+            "usage": {
+                "prompt_tokens": data.get("prompt_eval_count", 0) or 0,
+                "completion_tokens": data.get("eval_count", 0) or 0,
+                "total_tokens": (data.get("prompt_eval_count", 0) or 0) + (data.get("eval_count", 0) or 0),
+            },
+        }
+
+
+# ── /v1/embeddings ──────────────────────────────────────────────────────────────
+
+class EmbeddingRequest(BaseModel):
+    model: str
+    input: str | list[str]
+
+
+@router.post("/embeddings")
+async def embeddings(body: EmbeddingRequest, user=Depends(get_current_principal)):
+    cfg = get_settings()
+    inputs = [body.input] if isinstance(body.input, str) else body.input
+    results = []
+    total_tokens = 0
+
+    async with httpx.AsyncClient(timeout=120) as client:
+        for i, text in enumerate(inputs):
+            resp = await client.post(
+                f"{cfg.ollama_host}/api/embeddings",
+                json={"model": body.model, "prompt": text},
+            )
+            if resp.status_code != 200:
+                raise HTTPException(status_code=502, detail=f"Ollama embeddings error: {resp.text[:200]}")
+            data = resp.json()
+            results.append({
+                "object": "embedding",
+                "index": i,
+                "embedding": data.get("embedding", []),
+            })
+            total_tokens += len(text.split())  # rough token estimate
+
+    return {
+        "object": "list",
+        "data": results,
+        "model": body.model,
+        "usage": {"prompt_tokens": total_tokens, "total_tokens": total_tokens},
+    }

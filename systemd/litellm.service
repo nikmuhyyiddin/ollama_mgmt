@@ -1,0 +1,22 @@
+[Unit]
+Description=LiteLLM Proxy (AI gateway, Postgres-backed)
+After=network-online.target postgresql.service ollama.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=nms_admin
+Group=nms_admin
+WorkingDirectory=/home/nms_admin/ollama_mgmt/litellm_test
+# PATH must include the venv bin so LiteLLM finds the prisma query engine.
+Environment=PATH=/home/nms_admin/ollama_mgmt/litellm_test/.venv/bin:/usr/local/bin:/usr/bin:/bin
+Environment=STORE_MODEL_IN_DB=True
+# Secrets (DATABASE_URL, provider keys, salt). Root-only, not in git. '-' = optional.
+EnvironmentFile=-/etc/litellm.env
+ExecStart=/home/nms_admin/ollama_mgmt/litellm_test/.venv/bin/litellm --config /home/nms_admin/ollama_mgmt/litellm_test/config.yaml --port 4000
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

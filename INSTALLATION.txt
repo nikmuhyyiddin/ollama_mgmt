@@ -1,0 +1,526 @@
+================================================================================
+  OLLAMA MANAGEMENT SERVER — INSTALLATION GUIDE
+  Wildcard SSL: *.malakoff.com.my (2026)
+================================================================================
+
+  Package contents : ollama_mgmt_deploy.zip
+  Last updated     : 2026-05-06
+  Target OS        : Ubuntu 22.04 / 24.04 LTS (x86_64)
+  Tested hardware  : NVIDIA RTX 3080 Ti / RTX 3070 / A6000
+
+================================================================================
+  CONTENTS
+================================================================================
+
+  1.  Prerequisites
+  2.  Method A — Remote deploy (from source machine)
+  3.  Method B — Manual install (on the target server directly)
+        3a. System dependencies
+        3b. NVIDIA driver setup
+        3c. Install Ollama
+        3d. Configure Ollama service
+        3e. Deploy application
+        3f. Configure Python backend
+        3g. Build & serve frontend
+        3h. Configure Nginx
+        3i. Install systemd service
+        3j. SSL certificates
+  4.  First login
+  5.  Ollama tuning (per GPU type)
+  6.  Firewall (UFW) configuration
+  7.  Pulling models
+  8.  Troubleshooting
+  9.  Updating an existing installation
+
+================================================================================
+  1. PREREQUISITES
+================================================================================
+
+  On the SOURCE machine (where the zip came from):
+    - SSH key-based auth to the target server
+    - rsync installed
+
+  On the TARGET server:
+    - Ubuntu 22.04 or 24.04 LTS
+    - NVIDIA GPU with driver 525+ (535+ recommended for Ada/Ampere)
+    - Internet access (to install packages and download Ollama)
+    - A user account with sudo privileges (e.g. nms_admin)
+    - DNS record pointing your domain to the server IP
+      e.g.  ollama_a6000.malakoff.com.my  →  <SERVER IP>
+
+  Ports required (open in firewall):
+    - 22    SSH
+    - 80    HTTP (redirects to HTTPS)
+    - 443   HTTPS (main app)
+    - 8443  HTTPS (alternative port for API-key clients)
+
+
+================================================================================
+  2. METHOD A — REMOTE DEPLOY (from source machine, recommended)
+================================================================================
+
+  This is the easiest method. Run from the machine that has this package.
+
+  Step 1 — Unzip the package
+  --------------------------
+    unzip ollama_mgmt_deploy.zip
+    cd ollama_mgmt
+
+  Step 2 — Set up SSH key auth to the target server
+  --------------------------------------------------
+    ssh-copy-id nms_admin@<TARGET-SERVER-IP>
+    # Test: ssh nms_admin@<TARGET-SERVER-IP> "echo OK"
+
+  Step 3 — Run the deploy script
+  --------------------------------
+    bash scripts/deploy_remote.sh nms_admin@<TARGET-SERVER-IP> \
+        --domain ollama_a6000.malakoff.com.my \
+        --models-dir /mnt/data/ollama_models \
+        --skip-build
+
+    Options:
+      --domain     <FQDN>   Domain name (e.g. ollama_a6000.malakoff.com.my)
+      --models-dir <PATH>   Where to store Ollama model files (needs free space)
+      --skip-build          Use the pre-built frontend/dist/ included in the zip
+      --no-ollama           Skip Ollama install if it is already on the target
+      --no-cert             Skip SSL certificate copy
+      --no-mgmt             Install Ollama only (skip the management app)
+
+  Step 4 — Done
+  -------------
+    Access the app at: https://ollama_a6000.malakoff.com.my
+    Default login: admin / admin
+    CHANGE THE PASSWORD IMMEDIATELY AFTER FIRST LOGIN.
+
+
+================================================================================
+  3. METHOD B — MANUAL INSTALL (on the target server directly)
+================================================================================
+
+  Use this method if you prefer to install step-by-step, or if Method A is not
+  available (no SSH key access from source machine).
+
+  Copy the zip to the server first:
+    scp ollama_mgmt_deploy.zip nms_admin@<SERVER-IP>:~
+    ssh nms_admin@<SERVER-IP>
+    unzip ollama_mgmt_deploy.zip
+    cd ollama_mgmt
+
+  ── 3a. System dependencies ──────────────────────────────────────────────────
+
+    sudo apt-get update
+    sudo apt-get install -y \
+        curl wget git rsync \
+        python3 python3-pip python3-venv python3-dev \
+        build-essential \
+        nginx \
+        nodejs npm \
+        sqlite3 \
+        openssl ca-certificates \
+        lsof net-tools
+
+  ── 3b. NVIDIA driver setup ──────────────────────────────────────────────────
+
+    Check if drivers are already installed:
+      nvidia-smi
+
+    If NOT installed (driver installation requires a reboot):
+
+      For A6000 / A-series (Ampere):
+        sudo apt-get install -y nvidia-driver-570
+
+      For RTX 3080 Ti / 3070 (Ampere):
+        sudo apt-get install -y nvidia-driver-535
+
+      Alternative (auto-detect):
+        sudo ubuntu-drivers install
+
+      Then reboot:
+        sudo reboot
+
+      Verify after reboot:
+        nvidia-smi
+        # Should show GPU name, driver version, and VRAM
+
+  ── 3c. Install Ollama ───────────────────────────────────────────────────────
+
+    curl -fsSL https://ollama.ai/install.sh | sh
+    ollama --version
+
+    Verify it is running:
+      sudo systemctl status ollama
+
+  ── 3d. Configure Ollama service ─────────────────────────────────────────────
+
+    This creates a systemd drop-in to tune Ollama for your GPU and point it
+    to the correct model storage path.
+
+    Create model storage directory:
+      sudo mkdir -p /mnt/data/ollama_models/models
+      sudo chown ollama:ollama /mnt/data/ollama_models
+
+    Write the override (adjust values per the tuning table in Section 5):
+      sudo mkdir -p /etc/systemd/system/ollama.service.d
+      sudo tee /etc/systemd/system/ollama.service.d/override.conf > /dev/null <<EOF
+    [Service]
+    Environment="OLLAMA_MODELS=/mnt/data/ollama_models/models"
+    Environment="OLLAMA_HOST=127.0.0.1"
+    Environment="OLLAMA_KEEP_ALIVE=24h"
+    Environment="OLLAMA_NUM_PARALLEL=4"
+    Environment="OLLAMA_MAX_LOADED_MODELS=2"
+    Environment="OLLAMA_MAX_QUEUE=512"
+    Environment="OLLAMA_FLASH_ATTENTION=1"
+    Environment="OLLAMA_KV_CACHE_TYPE=q8_0"
+    EOF
+
+    Apply and restart:
+      sudo systemctl daemon-reload
+      sudo systemctl enable ollama
+      sudo systemctl restart ollama
+      sudo systemctl status ollama
+
+    Test Ollama API (should return a JSON list of models):
+      curl http://localhost:11434/api/tags
+
+  ── 3e. Deploy application files ─────────────────────────────────────────────
+
+    The ollama_mgmt directory is already at ~/ollama_mgmt if you unzipped there.
+    No further file copying needed.
+
+    Set correct ownership:
+      chown -R nms_admin:nms_admin ~/ollama_mgmt
+
+  ── 3f. Configure Python backend ─────────────────────────────────────────────
+
+    Create virtual environment and install dependencies:
+      cd ~/ollama_mgmt
+      python3 -m venv backend/.venv
+      backend/.venv/bin/pip install --upgrade pip
+      backend/.venv/bin/pip install -r backend/requirements.txt
+
+    Create .env file:
+      cp .env.example .env
+
+    Edit .env with your settings:
+      nano .env
+
+      Set these values:
+        OLLAMA_HOST=http://127.0.0.1:11434
+        JWT_SECRET=<run: openssl rand -hex 32>
+        JWT_EXPIRE_MINUTES=1440
+        DB_PATH=./db/ollama.db
+        BACKEND_HOST=127.0.0.1
+        BACKEND_PORT=8000
+        CORS_ORIGINS=*,https://ollama_a6000.malakoff.com.my
+
+    Initialise the database:
+      mkdir -p db
+      sqlite3 db/ollama.db < backend/db/schema.sql
+
+    Test the backend (should return GPU stats JSON):
+      cd ~/ollama_mgmt
+      backend/.venv/bin/uvicorn backend.main:app --host 127.0.0.1 --port 8000 &
+      sleep 2
+      curl http://localhost:8000/api/gpu/stats
+      kill %1   # stop test server
+
+  ── 3g. Build & serve frontend ───────────────────────────────────────────────
+
+    The pre-built frontend is already included in frontend/dist/
+    Skip to 3h if using the zip package (recommended).
+
+    To rebuild from source (if you made frontend changes):
+      cd ~/ollama_mgmt/frontend
+      npm install --legacy-peer-deps
+      npm run build
+      # Output: frontend/dist/
+
+  ── 3h. Configure Nginx ──────────────────────────────────────────────────────
+
+    Create the fullchain certificate (combine leaf + CA bundle):
+      cat wildcard.malakoff.com.my_2026/wildcard.malakoff.com.my_2026.crt \
+          wildcard.malakoff.com.my_2026/wildcard.malakoff.com.my_2026CA.crt \
+          > wildcard.malakoff.com.my_2026/wildcard.malakoff.com.my_2026_fullchain.crt
+
+    Edit nginx/ollama-mgmt.conf — update these 3 lines to match your setup:
+
+      server_name  ollama_a6000.malakoff.com.my;   ← your domain (both server blocks)
+
+      ssl_certificate      /home/nms_admin/ollama_mgmt/wildcard.malakoff.com.my_2026/wildcard.malakoff.com.my_2026_fullchain.crt;
+      ssl_certificate_key  /home/nms_admin/ollama_mgmt/wildcard.malakoff.com.my_2026/wildcard.malakoff.com.my_2026.key;
+
+      root  /home/nms_admin/ollama_mgmt/frontend/dist;   ← your actual path
+
+    Install and activate the Nginx config:
+      sudo cp nginx/ollama-mgmt.conf /etc/nginx/sites-available/ollama-mgmt
+      sudo ln -sf /etc/nginx/sites-available/ollama-mgmt \
+                  /etc/nginx/sites-enabled/ollama-mgmt
+      sudo rm -f /etc/nginx/sites-enabled/default   # disable default site
+
+    Test and reload:
+      sudo nginx -t
+      sudo systemctl enable nginx
+      sudo systemctl reload nginx
+
+  ── 3i. Install systemd service ──────────────────────────────────────────────
+
+    Edit systemd/ollama-mgmt.service — update these lines if your username
+    is not nms_admin:
+      User=nms_admin
+      Group=nms_admin
+      WorkingDirectory=/home/nms_admin/ollama_mgmt
+      EnvironmentFile=/home/nms_admin/ollama_mgmt/.env
+
+    Install:
+      sudo cp systemd/ollama-mgmt.service /etc/systemd/system/
+      sudo systemctl daemon-reload
+      sudo systemctl enable ollama-mgmt
+      sudo systemctl start ollama-mgmt
+
+    Verify:
+      sudo systemctl status ollama-mgmt
+      journalctl -u ollama-mgmt -f   ← live logs
+
+  ── 3j. SSL certificates ─────────────────────────────────────────────────────
+
+    The wildcard certificate for *.malakoff.com.my (2026) is included in:
+      wildcard.malakoff.com.my_2026/
+
+    Files used by Nginx:
+      wildcard.malakoff.com.my_2026_fullchain.crt  ← created in step 3h
+      wildcard.malakoff.com.my_2026.key            ← private key
+
+    Certificate details:
+      Subject  : *.malakoff.com.my
+      Issuer   : Sectigo Public Server Authentication CA DV R36
+      Valid    : 2026-04-05 → 2026-10-20
+      Type     : Publicly trusted (no client-side installation needed)
+
+    NOTE: Protect the .key file. It is already mode 644 in the zip — tighten
+    permissions on the target server:
+      chmod 600 wildcard.malakoff.com.my_2026/wildcard.malakoff.com.my_2026.key
+
+
+================================================================================
+  4. FIRST LOGIN
+================================================================================
+
+  1. Open your browser and navigate to:
+       https://ollama_a6000.malakoff.com.my
+
+  2. Log in with:
+       Username : admin
+       Password : admin
+
+  3. IMMEDIATELY change the password:
+       Click your username (top right) → Change Password
+
+  4. Create additional user accounts as needed via:
+       Settings → Users → Add User
+
+
+================================================================================
+  5. OLLAMA TUNING (per GPU type)
+================================================================================
+
+  Adjust /etc/systemd/system/ollama.service.d/override.conf based on your GPU.
+  Run "sudo systemctl daemon-reload && sudo systemctl restart ollama" after any change.
+
+  ┌──────────────────────┬────────────┬──────────────┬──────────────┬───────────────────┐
+  │ GPU                  │ VRAM       │ NUM_PARALLEL │ MAX_LOADED   │ Notes             │
+  ├──────────────────────┼────────────┼──────────────┼──────────────┼───────────────────┤
+  │ NVIDIA A6000         │ 48 GB      │ 4            │ 2            │ Large models OK   │
+  │ RTX 3080 Ti          │ 12 GB      │ 2            │ 2 (per GPU)  │ Multi-GPU spread  │
+  │ RTX 3070             │ 8 GB       │ 2            │ 1            │ Smaller models    │
+  │ 2× RTX 3080 Ti +     │            │              │              │                   │
+  │   RTX 3070 (32GB)    │ 32 GB      │ 2            │ 4            │ Current setup     │
+  └──────────────────────┴────────────┴──────────────┴──────────────┴───────────────────┘
+
+  Environment variables explained:
+    OLLAMA_NUM_PARALLEL     Max concurrent inference requests
+    OLLAMA_MAX_LOADED_MODELS Max models kept in VRAM at once
+    OLLAMA_MAX_QUEUE        Max queued requests (beyond parallel limit)
+    OLLAMA_KEEP_ALIVE       How long idle models stay loaded (e.g. 24h, 1h, -1=always)
+    OLLAMA_FLASH_ATTENTION  Enable FlashAttention (faster, less VRAM; requires Ampere+)
+    OLLAMA_KV_CACHE_TYPE    Quantize KV cache: q8_0 saves VRAM vs default fp16
+    OLLAMA_MODELS           Path to model storage directory
+
+
+================================================================================
+  6. FIREWALL (UFW) CONFIGURATION
+================================================================================
+
+  Set up UFW to allow only required traffic:
+
+    sudo ufw default deny incoming
+    sudo ufw default allow outgoing
+    sudo ufw allow 22/tcp    # SSH
+    sudo ufw allow 80/tcp    # HTTP → redirects to HTTPS
+    sudo ufw allow 443/tcp   # HTTPS
+    sudo ufw allow 8443/tcp  # HTTPS (API key clients)
+    sudo ufw enable
+
+  DO NOT open port 11434 (Ollama native API).
+  All Ollama traffic must flow through the management server.
+
+  To allow specific trusted hosts to access the management API directly:
+    sudo ufw allow from 172.16.2.40 to any port 8000
+    sudo ufw allow from 172.16.50.55 to any port 8000
+
+
+================================================================================
+  7. PULLING MODELS
+================================================================================
+
+  Via the web UI:
+    Navigate to → Models → Pull Model → enter model name (e.g. llama3.2:latest)
+
+  Via Ollama CLI on the server:
+    ollama pull llama3.2
+    ollama pull qwen2.5:32b
+    ollama pull deepseek-r1:14b
+
+  Via the OpenAI-compatible API (requires API key):
+    curl -X POST https://ollama_a6000.malakoff.com.my/v1/chat/completions \
+      -H "Authorization: Bearer <YOUR-API-KEY>" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "model": "llama3.2",
+        "messages": [{"role": "user", "content": "Hello!"}]
+      }'
+
+  Recommended models for A6000 (48 GB VRAM):
+    llama3.3:70b           ~40 GB  (fits in single A6000)
+    qwen2.5:72b            ~42 GB  (fits in single A6000)
+    deepseek-r1:32b        ~20 GB
+    mistral-large:latest   ~24 GB
+    llama3.2:latest        ~2 GB   (fast, small)
+
+
+================================================================================
+  8. TROUBLESHOOTING
+================================================================================
+
+  ── Service won't start ──────────────────────────────────────────────────────
+
+    Check logs:
+      journalctl -u ollama-mgmt -n 50 --no-pager
+      journalctl -u ollama -n 50 --no-pager
+      sudo nginx -t
+
+    Common causes:
+      - .env file missing or has wrong path (DB_PATH, OLLAMA_HOST)
+      - Port 8000 already in use: lsof -i :8000
+      - Python venv not created: run step 3f again
+      - SQLite DB not initialised: run sqlite3 db/ollama.db < backend/db/schema.sql
+
+  ── Nginx certificate error ──────────────────────────────────────────────────
+
+    ERR_CERT_AUTHORITY_INVALID
+      → The certificate is publicly trusted (Sectigo). This error means you are
+        accessing via IP address, not domain name. Use the FQDN in your browser.
+
+    ERR_CERT_COMMON_NAME_INVALID
+      → Domain mismatch. Ensure server_name in nginx config matches your actual
+        DNS name, and that the DNS A record points to this server.
+
+    Certificate expired
+      → Renew the wildcard cert and repeat the SSL update procedure.
+
+  ── GPU not detected ─────────────────────────────────────────────────────────
+
+    nvidia-smi shows GPU but Ollama uses CPU:
+      sudo systemctl restart ollama
+      ollama run llama3.2 "test"   # check output mentions GPU
+
+    GPU not showing in nvidia-smi:
+      sudo dmesg | grep -i nvidia   # check kernel messages
+      sudo apt-get reinstall nvidia-driver-570
+      sudo reboot
+
+  ── Cannot connect to Ollama API ─────────────────────────────────────────────
+
+    curl http://localhost:11434/api/tags
+    # Should return {"models":[...]}
+
+    If it fails:
+      sudo systemctl status ollama
+      sudo systemctl restart ollama
+
+  ── Cannot reach the app from outside ────────────────────────────────────────
+
+    Check Nginx is running:     sudo systemctl status nginx
+    Check UFW rules:            sudo ufw status
+    Check DNS:                  nslookup ollama_a6000.malakoff.com.my
+    Check listening ports:      sudo ss -tlnp | grep -E '80|443|8443'
+
+  ── "502 Bad Gateway" from Nginx ─────────────────────────────────────────────
+
+    The FastAPI backend is not running. Check:
+      sudo systemctl status ollama-mgmt
+      journalctl -u ollama-mgmt -n 30
+
+
+================================================================================
+  9. UPDATING AN EXISTING INSTALLATION
+================================================================================
+
+  From the source machine (using the deploy script):
+  -------------------------------------------------
+    # Update app only — no Ollama reinstall, certs already in place, skip rebuild
+    bash scripts/deploy_remote.sh nms_admin@<TARGET-IP> \
+        --no-ollama --no-cert --skip-build
+
+  Manually on the target server:
+  -------------------------------
+    cd ~/ollama_mgmt
+
+    # 1. Pull latest files (or re-copy from zip)
+    rsync -az ... or unzip new package
+
+    # 2. Update Python dependencies if requirements changed
+    backend/.venv/bin/pip install -r backend/requirements.txt
+
+    # 3. Rebuild frontend if source changed (skip if using pre-built dist)
+    cd frontend && npm run build && cd ..
+
+    # 4. Apply Nginx config changes (if nginx/ollama-mgmt.conf was updated)
+    sudo cp nginx/ollama-mgmt.conf /etc/nginx/sites-available/ollama-mgmt
+    sudo nginx -t && sudo systemctl reload nginx
+
+    # 5. Restart the backend
+    sudo systemctl restart ollama-mgmt
+
+    # 6. Verify
+    sudo systemctl status ollama-mgmt
+    curl http://localhost:8000/api/gpu/stats
+
+
+================================================================================
+  QUICK REFERENCE — USEFUL COMMANDS
+================================================================================
+
+  Service management:
+    sudo systemctl status ollama-mgmt       Check app status
+    sudo systemctl restart ollama-mgmt      Restart app
+    sudo systemctl status ollama            Check Ollama status
+    sudo systemctl restart ollama           Restart Ollama
+    sudo systemctl reload nginx             Reload Nginx (no downtime)
+    journalctl -u ollama-mgmt -f            Follow app logs (live)
+    journalctl -u ollama -f                 Follow Ollama logs (live)
+
+  Ollama management:
+    ollama list                             List downloaded models
+    ollama pull <model>                     Download a model
+    ollama rm <model>                       Delete a model
+    ollama ps                               Show currently loaded models
+
+  Diagnostics:
+    nvidia-smi                              GPU status
+    sudo ss -tlnp | grep -E '80|443|8000'  Check listening ports
+    sudo nginx -t                           Test Nginx config
+    curl http://localhost:8000/api/gpu/stats  Test backend API
+
+================================================================================
+  END OF INSTALLATION GUIDE
+================================================================================

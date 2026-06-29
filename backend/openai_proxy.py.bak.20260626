@@ -1,0 +1,364 @@
+"""
+OpenAI-compatible API Proxy — Phase 3
+
+Translates OpenAI API calls to Ollama's native format:
+  GET  /v1/models                 → Ollama /api/tags
+  POST /v1/chat/completions       → Ollama /api/chat   (streaming + non-streaming)
+  POST /v1/completions            → Ollama /api/generate (legacy, non-chat)
+  POST /v1/embeddings             → Ollama /api/embeddings
+
+Authentication: Bearer <JWT> or Bearer omk_<api_key>  (same as existing API)
+"""
+import json
+import time
+import uuid
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+
+from backend.api_keys import get_current_principal
+from backend.config import get_settings
+from backend.db.database import get_db
+from backend.http_client import get_http
+
+router = APIRouter(prefix="/v1", tags=["openai-compat"])
+
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+def _ts() -> int:
+    return int(time.time())
+
+
+def _log_usage(request, user, model, prompt_tokens, completion_tokens, latency_ms, status):
+    """Write one request_logs row with token counts. Never breaks a request.
+    The middleware does NOT log /v1/* paths, so this is the only writer here."""
+    try:
+        ip = request.client.host if request.client else "unknown"
+        api_key_id = (user or {}).get("api_key_id")
+        with get_db() as db:
+            db.execute(
+                """INSERT INTO request_logs
+                       (ip, api_key_id, model, prompt_tokens, completion_tokens, latency_ms, status)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (ip, api_key_id, model, prompt_tokens, completion_tokens, latency_ms, status),
+            )
+    except Exception:
+        pass
+
+
+def _chat_id() -> str:
+    return f"chatcmpl-{uuid.uuid4().hex[:24]}"
+
+
+def _map_tool_calls(tcs: Any, chat_id: str) -> list[dict[str, Any]] | None:
+    """Ollama tool_calls (arguments as dict) -> OpenAI shape (arguments as JSON string)."""
+    if not tcs:
+        return None
+    out: list[dict[str, Any]] = []
+    for i, tc in enumerate(tcs):
+        fn = (tc or {}).get("function", {}) or {}
+        args = fn.get("arguments", {})
+        if not isinstance(args, str):
+            args = json.dumps(args)
+        out.append({
+            "id": tc.get("id") or f"call_{chat_id}_{i}",
+            "type": "function",
+            "index": i,
+            "function": {"name": fn.get("name"), "arguments": args},
+        })
+    return out
+
+
+def _options_from_params(body: dict) -> dict:
+    """Map OpenAI generation params → Ollama options dict."""
+    opts: dict[str, Any] = {}
+    if "temperature" in body:
+        opts["temperature"] = body["temperature"]
+    if "top_p" in body:
+        opts["top_p"] = body["top_p"]
+    if "max_tokens" in body:
+        opts["num_predict"] = body["max_tokens"]
+    if "stop" in body:
+        opts["stop"] = body["stop"]
+    if "seed" in body:
+        opts["seed"] = body["seed"]
+    return opts
+
+
+# ── /v1/models ─────────────────────────────────────────────────────────────────
+
+@router.get("/models")
+async def list_models_openai(user=Depends(get_current_principal)):
+    cfg = get_settings()
+    resp = await get_http().get(f"{cfg.ollama_host}/api/tags", timeout=30)
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail="Ollama unreachable")
+    models = resp.json().get("models", [])
+    return {
+        "object": "list",
+        "data": [
+            {
+                "id": m["name"],
+                "object": "model",
+                "created": _ts(),
+                "owned_by": "ollama",
+            }
+            for m in models
+        ],
+    }
+
+
+# ── /v1/chat/completions ────────────────────────────────────────────────────────
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str | None = None
+    tool_calls: list[dict[str, Any]] | None = None
+    tool_call_id: str | None = None
+    name: str | None = None
+
+
+class ChatCompletionRequest(BaseModel):
+    model: str
+    messages: list[ChatMessage]
+    stream: bool = False
+    temperature: float | None = None
+    top_p: float | None = None
+    max_tokens: int | None = None
+    stop: list[str] | str | None = None
+    seed: int | None = None
+    tools: list[dict[str, Any]] | None = None
+    tool_choice: Any | None = None
+
+
+def _sse_chunk(chat_id: str, model: str, delta: dict, finish_reason: str | None = None) -> str:
+    payload = {
+        "id": chat_id,
+        "object": "chat.completion.chunk",
+        "created": _ts(),
+        "model": model,
+        "choices": [{"index": 0, "delta": delta, "finish_reason": finish_reason}],
+    }
+    return f"data: {json.dumps(payload)}\n\n"
+
+
+@router.post("/chat/completions")
+async def chat_completions(request: Request, body: ChatCompletionRequest, user=Depends(get_current_principal)):
+    cfg = get_settings()
+    chat_id = _chat_id()
+    start = time.time()
+
+    def _msg(m: ChatMessage) -> dict[str, Any]:
+        d: dict[str, Any] = {"role": m.role, "content": m.content or ""}
+        if m.tool_calls:
+            d["tool_calls"] = m.tool_calls
+        if m.tool_call_id:
+            d["tool_call_id"] = m.tool_call_id
+        if m.name:
+            d["name"] = m.name
+        return d
+
+    ollama_payload: dict[str, Any] = {
+        "model": body.model,
+        "messages": [_msg(m) for m in body.messages],
+        "stream": body.stream,
+    }
+    if body.tools:
+        ollama_payload["tools"] = body.tools
+    opts = _options_from_params(body.model_dump(exclude_none=True))
+    if opts:
+        ollama_payload["options"] = opts
+    # ponytail: residency knob — raise to keep hot models in VRAM; too high starves
+    # KV cache on the 32GB rig. Tune, don't max.
+    if cfg.ollama_keep_alive:
+        ollama_payload["keep_alive"] = cfg.ollama_keep_alive
+
+    if body.stream:
+        # ── Streaming path ──────────────────────────────────────────────────
+        async def _stream():
+            saw_tools: list[bool] = []
+            yield _sse_chunk(chat_id, body.model, {"role": "assistant", "content": ""})
+            async with get_http().stream(
+                "POST",
+                f"{cfg.ollama_host}/api/chat",
+                json=ollama_payload,
+                timeout=None,
+            ) as resp:
+                async for line in resp.aiter_lines():
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    msg = data.get("message", {}) or {}
+                    content = msg.get("content", "")
+                    tcs = _map_tool_calls(msg.get("tool_calls"), chat_id)
+                    done = data.get("done", False)
+                    if tcs:
+                        saw_tools.append(True)
+                        yield _sse_chunk(chat_id, body.model, {"tool_calls": tcs})
+                    if content:
+                        yield _sse_chunk(chat_id, body.model, {"content": content})
+                    if done:
+                        _log_usage(request, user, body.model,
+                                   data.get("prompt_eval_count", 0) or 0,
+                                   data.get("eval_count", 0) or 0,
+                                   int((time.time() - start) * 1000), "200")
+                        fr = "tool_calls" if saw_tools else "stop"
+                        yield _sse_chunk(chat_id, body.model, {}, finish_reason=fr)
+                        yield "data: [DONE]\n\n"
+                        return
+
+        return StreamingResponse(_stream(), media_type="text/event-stream")
+
+    else:
+        # ── Non-streaming path ──────────────────────────────────────────────
+        resp = await get_http().post(f"{cfg.ollama_host}/api/chat", json=ollama_payload, timeout=300)
+        if resp.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"Ollama error: {resp.text[:200]}")
+        data = resp.json()
+        msg = data.get("message", {}) or {}
+        content = msg.get("content", "")
+        tool_calls = _map_tool_calls(msg.get("tool_calls"), chat_id)
+        prompt_tokens = data.get("prompt_eval_count", 0) or 0
+        completion_tokens = data.get("eval_count", 0) or 0
+        _log_usage(request, user, body.model, prompt_tokens, completion_tokens,
+                   int((time.time() - start) * 1000), "200")
+        out_message: dict[str, Any] = {"role": "assistant", "content": content if content else None}
+        if tool_calls:
+            out_message["tool_calls"] = tool_calls
+        return {
+            "id": chat_id,
+            "object": "chat.completion",
+            "created": _ts(),
+            "model": body.model,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": out_message,
+                    "finish_reason": "tool_calls" if tool_calls else "stop",
+                }
+            ],
+            "usage": {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": prompt_tokens + completion_tokens,
+            },
+        }
+
+
+# ── /v1/completions (legacy text completion) ───────────────────────────────────
+
+class CompletionRequest(BaseModel):
+    model: str
+    prompt: str
+    stream: bool = False
+    max_tokens: int | None = None
+    temperature: float | None = None
+    stop: list[str] | str | None = None
+
+
+@router.post("/completions")
+async def completions(request: Request, body: CompletionRequest, user=Depends(get_current_principal)):
+    """Legacy text completion — maps to Ollama /api/generate."""
+    cfg = get_settings()
+    comp_id = f"cmpl-{uuid.uuid4().hex[:24]}"
+    start = time.time()
+    ollama_payload: dict[str, Any] = {
+        "model": body.model,
+        "prompt": body.prompt,
+        "stream": body.stream,
+    }
+    opts = _options_from_params(body.model_dump(exclude_none=True))
+    if opts:
+        ollama_payload["options"] = opts
+    # ponytail: residency knob — see chat_completions.
+    if cfg.ollama_keep_alive:
+        ollama_payload["keep_alive"] = cfg.ollama_keep_alive
+
+    if body.stream:
+        async def _stream():
+            async with get_http().stream(
+                "POST", f"{cfg.ollama_host}/api/generate", json=ollama_payload, timeout=None
+            ) as resp:
+                async for line in resp.aiter_lines():
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    text = data.get("response", "")
+                    done = data.get("done", False)
+                    chunk = {
+                        "id": comp_id, "object": "text_completion.chunk",
+                        "created": _ts(), "model": body.model,
+                        "choices": [{"text": text, "index": 0, "finish_reason": "stop" if done else None}],
+                    }
+                    yield f"data: {json.dumps(chunk)}\n\n"
+                    if done:
+                        _log_usage(request, user, body.model,
+                                   data.get("prompt_eval_count", 0) or 0,
+                                   data.get("eval_count", 0) or 0,
+                                   int((time.time() - start) * 1000), "200")
+                        yield "data: [DONE]\n\n"
+                        return
+        return StreamingResponse(_stream(), media_type="text/event-stream")
+    else:
+        resp = await get_http().post(f"{cfg.ollama_host}/api/generate", json=ollama_payload, timeout=300)
+        data = resp.json()
+        pt = data.get("prompt_eval_count", 0) or 0
+        ct = data.get("eval_count", 0) or 0
+        _log_usage(request, user, body.model, pt, ct, int((time.time() - start) * 1000), "200")
+        return {
+            "id": comp_id, "object": "text_completion", "created": _ts(), "model": body.model,
+            "choices": [{"text": data.get("response", ""), "index": 0, "finish_reason": "stop"}],
+            "usage": {
+                "prompt_tokens": pt,
+                "completion_tokens": ct,
+                "total_tokens": pt + ct,
+            },
+        }
+
+
+# ── /v1/embeddings ──────────────────────────────────────────────────────────────
+
+class EmbeddingRequest(BaseModel):
+    model: str
+    input: str | list[str]
+
+
+@router.post("/embeddings")
+async def embeddings(body: EmbeddingRequest, user=Depends(get_current_principal)):
+    cfg = get_settings()
+    inputs = [body.input] if isinstance(body.input, str) else body.input
+    results = []
+    total_tokens = 0
+
+    client = get_http()
+    for i, text in enumerate(inputs):
+        resp = await client.post(
+            f"{cfg.ollama_host}/api/embeddings",
+            json={"model": body.model, "prompt": text},
+            timeout=120,
+        )
+        if resp.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"Ollama embeddings error: {resp.text[:200]}")
+        data = resp.json()
+        results.append({
+            "object": "embedding",
+            "index": i,
+            "embedding": data.get("embedding", []),
+        })
+        total_tokens += len(text.split())  # rough token estimate
+
+    return {
+        "object": "list",
+        "data": results,
+        "model": body.model,
+        "usage": {"prompt_tokens": total_tokens, "total_tokens": total_tokens},
+    }

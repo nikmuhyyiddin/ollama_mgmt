@@ -1,0 +1,30 @@
+[Unit]
+Description=Ollama Management Server (FastAPI)
+Documentation=https://github.com/nms_admin/ollama_mgmt
+After=network.target ollama.service
+Wants=ollama.service
+
+[Service]
+Type=simple
+User=nms_admin
+Group=nms_admin
+WorkingDirectory=/home/nms_admin/ollama_mgmt
+EnvironmentFile=/home/nms_admin/ollama_mgmt/.env
+ExecStart=/home/nms_admin/ollama_mgmt/backend/.venv/bin/uvicorn backend.main:app \
+    --host 127.0.0.1 \
+    --port 8000 \
+    --workers 1 \
+    --access-log \
+    --log-level info
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ollama-mgmt
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

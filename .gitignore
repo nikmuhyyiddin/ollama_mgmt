@@ -1,0 +1,96 @@
+# .gitignore — Universal Template
+# Adapt this for your project. Sections marked [OPTIONAL] can be removed if not needed.
+
+# ── Dependencies ──────────────────────────────────────────────────────────────
+node_modules/
+.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.uv/
+
+# ── Build Output ───────────────────────────────────────────────────────────────
+dist/
+build/
+out/
+.output/
+
+# [OPTIONAL] Next.js
+.next/
+next-env.d.ts
+
+# [OPTIONAL] Vite
+*.local
+
+# [OPTIONAL] Python packaging
+*.egg-info/
+*.egg
+site/
+
+# ── Environment & Secrets ──────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example       # Always commit .env.example — it's a safe template
+*.pem
+*.key
+
+# ── Testing ───────────────────────────────────────────────────────────────────
+coverage/
+.coverage
+htmlcov/
+e2e-screenshots/
+tests/e2e/screenshots/
+
+# ── Logs & Debug ──────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+logs/
+
+# ── Editors & OS ──────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/settings.json      # Commit .vscode/extensions.json but not personal settings
+*.suo
+*.user
+
+# ── TypeScript ────────────────────────────────────────────────────────────────
+*.tsbuildinfo
+
+# ── Deployment ────────────────────────────────────────────────────────────────
+# [OPTIONAL] Vercel
+.vercel
+
+# [OPTIONAL] Docker
+.docker/
+
+# ── Misc ──────────────────────────────────────────────────────────────────────
+*.bak
+*.tmp
+.cache/
+
+# ── Project-specific secrets & data (DO NOT COMMIT) ────────────────────────────
+# Databases (contain users, key hashes, request logs)
+*.db
+*.sqlite
+*.sqlite3
+# TLS certificates & private keys
+*.crt
+wildcard.malakoff.com.my_2026/
+# LiteLLM proxy config — contains master_key (commit a sanitized .example instead)
+litellm_test/config.yaml
+litellm_test/
+# Test/cache artifacts
+.pytest_cache/
+# Internal docs (remove this line if you want to publish them)
+ollama-mgmt-blueprint.docx
