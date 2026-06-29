@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     litellm_db_url: str = "postgresql://litellm:change-me@127.0.0.1:5432/litellm"
     jwt_secret: str = "dev-secret-change-me"
     jwt_expire_minutes: int = 1440
+    # Seed password for the first admin user. If empty, a random one is generated
+    # and logged once at startup (see auth.seed_admin).
+    admin_password: str = ""
     db_path: str = "./db/ollama.db"
     backend_host: str = "0.0.0.0"
     backend_port: int = 8000

@@ -3,6 +3,7 @@ import { Toaster } from 'sonner'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import Models from './pages/Models'
+import Playground from './pages/Playground'
 import AccessControl from './pages/AccessControl'
 import APIKeys from './pages/APIKeys'
 import Analytics from './pages/Analytics'
@@ -22,6 +23,7 @@ function AppLayout() {
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/models" element={<Models />} />
+          <Route path="/playground" element={<Playground />} />
           <Route path="/access" element={<AccessControl />} />
           <Route path="/api-keys" element={<APIKeys />} />
           <Route path="/analytics" element={<Analytics />} />

@@ -364,8 +364,8 @@
   All Ollama traffic must flow through the management server.
 
   To allow specific trusted hosts to access the management API directly:
-    sudo ufw allow from 172.16.2.40 to any port 8000
-    sudo ufw allow from 172.16.50.55 to any port 8000
+    sudo ufw allow from 10.0.0.40 to any port 8000
+    sudo ufw allow from 10.0.0.55 to any port 8000
 
 
 ================================================================================

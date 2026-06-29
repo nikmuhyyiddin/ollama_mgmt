@@ -33,7 +33,7 @@ def test_delete_rule(client, auth_headers):
     # Add then delete
     add_resp = client.post(
         "/api/access/rules",
-        json={"cidr": "172.16.99.0/24"},
+        json={"cidr": "10.0.0.0/24"},
         headers=auth_headers,
     )
     rule_id = add_resp.json()["id"]

@@ -9,7 +9,7 @@ This file provides guidance to AI coding assistants (Antigravity, Claude, Cursor
 **Ollama Management Server** — a self-hosted, full-stack web application that wraps the Ollama GPU inference server with a complete operational layer. It acts as an authenticating reverse proxy in front of Ollama's native port (:11434), adding GPU monitoring, access control (IP allowlist + API keys), model lifecycle management, request logging, analytics, smart routing, and team collaboration tools.
 
 **Target hardware:** 3-GPU workstation — 2× RTX 3080 Ti (12 GB each) + 1× RTX 3070 (8 GB) = 32 GB total VRAM  
-**Ollama host:** `172.16.50.17:11434` (UFW-protected, accessed only via this management layer)
+**Ollama host:** `10.0.0.10:11434` (UFW-protected, accessed only via this management layer)
 
 ---
 
@@ -18,7 +18,7 @@ This file provides guidance to AI coding assistants (Antigravity, Claude, Cursor
 | Layer | Technology | Purpose |
 |-------|-----------|---------|
 | Frontend framework | React + Vite | SPA with fast HMR |
-| Styling | Tailwind CSS v4 + shadcn/ui | Design system |
+| Styling | Tailwind CSS v3 (`tailwindcss@3.4`) + lucide-react icons | Design system |
 | Charts | Recharts | GPU graphs, analytics |
 | Real-time | WebSocket client | Live GPU telemetry push |
 | Backend framework | FastAPI (Python) | REST API + WebSocket server |
@@ -28,7 +28,8 @@ This file provides guidance to AI coding assistants (Antigravity, Claude, Cursor
 | GPU telemetry | pynvml + nvidia-smi fallback | Per-GPU VRAM, util, temperature |
 | Task scheduler | APScheduler | Cron jobs (model eviction, log rotation) |
 | Database | SQLite | Logs, config, API keys, users |
-| Rate limiting | Redis | Sliding window throttle |
+| Rate limiting | In-memory deque (per-process) | Sliding window throttle — see `rate_limiter.py`. NOT Redis. |
+| LLM gateway | LiteLLM (separate service :4000) | API keys, spend tracking, OpenAI-compatible endpoint; portal proxies its admin API via `gateway.py` |
 | Reverse proxy | Nginx | TLS termination + static file serving |
 | Deployment | systemd service + nginx | Native host process management; no containers |
 
@@ -83,11 +84,16 @@ ollama-manager/
 │   ├── main.py          # FastAPI app entry point — mounts all routers
 │   ├── proxy.py         # Ollama reverse proxy + IP allowlist enforcement
 │   ├── gpu.py           # pynvml GPU telemetry + WebSocket push (1s interval)
-│   ├── models.py        # Model management: list, pull (SSE), delete, benchmark
-│   ├── auth.py          # JWT auth + bcrypt user management
+│   ├── models.py        # Model management: list, pull (SSE), delete, chat (SSE)
+│   ├── auth.py          # JWT auth + bcrypt user management + login throttle
 │   ├── logger.py        # Request logging middleware (SQLite)
 │   ├── scheduler.py     # APScheduler cron tasks
-│   ├── router.py        # Smart model routing logic
+│   ├── gateway.py       # LiteLLM admin-API proxy: keys, models, spend reports
+│   ├── analytics.py     # Proxy request-log analytics (summary, timeseries, heatmap)
+│   ├── system.py        # CPU/RAM/disk telemetry + WebSocket push
+│   ├── settings.py      # SMTP config + GPU alert history
+│   ├── gpu_monitor.py   # GPU health checks + SMTP alerting
+│   # NOTE: router.py (smart routing) and model benchmarking are roadmap, NOT built yet
 │   ├── db/
 │   │   ├── schema.sql   # SQLite schema definitions
 │   │   └── migrations/  # Version-controlled schema migrations
@@ -258,7 +264,7 @@ Copy `.env.example` to `.env` and fill in:
 
 ```env
 # Ollama
-OLLAMA_HOST=http://172.16.50.17:11434
+OLLAMA_HOST=http://10.0.0.10:11434
 
 # Auth
 JWT_SECRET=<generate with: openssl rand -hex 32>
@@ -303,9 +309,9 @@ CORS_ORIGINS=http://localhost:5173,https://your-domain.com
 
 ## Notes
 
-- Ollama itself runs as a `systemd` service (`ollama.service`) on the host at `172.16.50.17:11434`
+- Ollama itself runs as a `systemd` service (`ollama.service`) on the host at `10.0.0.10:11434`
 - Do **not** expose port 11434 directly — all traffic must go through this management server
-- UFW is active on the host; only whitelisted IPs (`172.16.2.40`, `172.16.50.55`, `172.16.50.70`) can currently reach Ollama directly
+- UFW is active on the host; only whitelisted IPs (`10.0.0.40`, `10.0.0.55`, `10.0.0.70`) can currently reach Ollama directly
 - VRAM budget: 32 GB total (12 + 12 + 8). Large models (≥ 30B) will span multiple GPUs automatically
 - Driver: NVIDIA 580.126.09 / CUDA 13.0
 - Python package manager: `pip` (use `venv` or similar). `uv` is an acceptable alternative.

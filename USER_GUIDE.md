@@ -31,7 +31,7 @@ Installed Ollama models with size and family. The list **auto-refreshes every
 ### Access Control
 IP allowlist enforced on every proxied Ollama request.
 - **No rules = all IPs allowed.** A yellow banner warns when the list is empty.
-- **Add a rule:** enter a CIDR (`172.16.50.0/24`), pick Allow/Deny, optional
+- **Add a rule:** enter a CIDR (`10.0.0.0/24`), pick Allow/Deny, optional
   label, *Add Rule*.
 - **Delete a rule:** trash icon → confirm. *Deleting an allow-rule changes who
   can reach Ollama* — the confirm dialog says so.

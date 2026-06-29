@@ -13,6 +13,11 @@ class PullModelSchema(BaseModel):
     name: str
 
 
+class ChatSchema(BaseModel):
+    model: str
+    messages: list[dict]  # [{role, content}, ...]
+
+
 @router.get("/api/models")
 async def list_models(user=Depends(get_current_user)):
     cfg = get_settings()
@@ -33,6 +38,27 @@ async def pull_model(body: PullModelSchema, user=Depends(get_current_user)):
             "POST",
             f"{cfg.ollama_host}/api/pull",
             json={"name": body.name, "stream": True},
+            timeout=None,
+        ) as resp:
+            async for line in resp.aiter_lines():
+                if line:
+                    yield f"data: {line}\n\n"
+
+    return StreamingResponse(_stream(), media_type="text/event-stream")
+
+
+@router.post("/api/chat")
+async def chat(body: ChatSchema, user=Depends(get_current_user)):
+    """Stream a chat completion from Ollama. Used by the Playground (JWT-gated,
+    unlike /ollama/* which is only IP-gated). Passes Ollama's NDJSON straight
+    through as SSE lines."""
+    cfg = get_settings()
+
+    async def _stream():
+        async with get_http().stream(
+            "POST",
+            f"{cfg.ollama_host}/api/chat",
+            json={"model": body.model, "messages": body.messages, "stream": True},
             timeout=None,
         ) as resp:
             async for line in resp.aiter_lines():

@@ -5,13 +5,14 @@ import { useAuth } from '../hooks/useAuth'
 import { useModalKeys } from '../hooks/useModalKeys'
 import {
   Cpu, Package, Shield, LogOut, Activity, Key, BarChart2,
-  Users, ScrollText, Lock, X, Eye, EyeOff, Settings
+  Users, ScrollText, Lock, X, Eye, EyeOff, Settings, MessageSquare
 } from 'lucide-react'
 import api from '../api'
 
 const navItems = [
   { to: '/', icon: Activity, label: 'Dashboard', end: true },
   { to: '/models', icon: Package, label: 'Models' },
+  { to: '/playground', icon: MessageSquare, label: 'Playground' },
   { to: '/access', icon: Shield, label: 'Access Control' },
   { to: '/api-keys', icon: Key, label: 'API Keys' },
   { to: '/analytics', icon: BarChart2, label: 'Analytics' },

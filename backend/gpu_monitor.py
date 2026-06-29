@@ -250,7 +250,7 @@ def check_gpu_health():
         subject = f"{len(alerts)} GPU issue(s) detected"
         body = "The following GPU issues were detected:\n\n"
         body += "\n".join(f"  • {a}" for a in alerts)
-        body += "\n\nServer: MCB-OLLAMA (172.16.50.17)"
+        body += "\n\nServer: MCB-OLLAMA (10.0.0.10)"
         body += f"\nTimestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}"
         _send_email(subject, body)
     else:

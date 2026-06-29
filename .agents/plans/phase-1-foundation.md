@@ -437,7 +437,7 @@ Wire all routers, start the GPU broadcast loop as a background task on startup.
 - **IMPLEMENT**: Create `.env.example` at project root:
   ```env
   # Ollama
-  OLLAMA_HOST=http://172.16.50.17:11434
+  OLLAMA_HOST=http://10.0.0.10:11434
 
   # Auth
   JWT_SECRET=change-me-generate-with-openssl-rand-hex-32
@@ -1507,7 +1507,7 @@ sqlite3 ./db/ollama.db "SELECT COUNT(*) FROM request_logs;"  # >0 after use
 - **Redis**: Rate limiting (Redis sliding window) is a Phase 2 module. Redis is NOT required for Phase 1.
 - **SQLite WAL mode**: Enabled in `database.py` so the read-heavy request logger and WebSocket broadcaster don't block each other.
 - **pynvml on this host**: Driver 580.126.09 / CUDA 13.0 confirmed. `pynvml` should initialise without issues. If it fails (e.g., missing `libnvidia-ml.so`), the server falls back to empty GPU list gracefully.
-- **Ollama host**: `http://172.16.50.17:11434` — do NOT change the UFW rules on port 11434. All external traffic must come through this management server on port 80 (nginx).
+- **Ollama host**: `http://10.0.0.10:11434` — do NOT change the UFW rules on port 11434. All external traffic must come through this management server on port 80 (nginx).
 
 ---
 
